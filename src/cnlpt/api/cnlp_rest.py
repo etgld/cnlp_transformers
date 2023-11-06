@@ -71,7 +71,7 @@ def get_dataset(
     return task_dataset
 
 
-def create_instance_string(doc_text: str, offsets: List[int]):
+def create_event_instance_string(doc_text: str, offsets: List[int]):
     start = max(0, offsets[0] - 100)
     end = min(len(doc_text), offsets[1] + 100)
     raw_str = (
@@ -84,7 +84,7 @@ def create_instance_string(doc_text: str, offsets: List[int]):
     return raw_str.replace("\n", " ")
 
 
-def initialize_cnlpt_model(app, model_name, cuda=True, batch_size=8):
+def initialize_model(app, model_name, cuda=True, batch_size=8, mode="cnlpt"):
     args = [
         "--output_dir",
         "save_run/",
@@ -99,14 +99,18 @@ def initialize_cnlpt_model(app, model_name, cuda=True, batch_size=8):
 
     app.state.training_args = training_args
 
-    AutoConfig.register("cnlpt", CnlpConfig)
-    AutoModel.register(CnlpConfig, CnlpModelForClassification)
+    if mode == "cnlpt":
+        AutoConfig.register("cnlpt", CnlpConfig)
+        AutoModel.register(CnlpConfig, CnlpModelForClassification)
 
     config = AutoConfig.from_pretrained(model_name)
     app.state.config = config
     app.state.tokenizer = AutoTokenizer.from_pretrained(model_name, config=config)
-    model = CnlpModelForClassification.from_pretrained(
-        model_name, cache_dir=os.getenv("HF_CACHE"), config=config
+    # can probably squash to one step but being safe
+    model = (
+        CnlpModelForClassification.from_pretrained(model_name, config=config)
+        if mode == "cnlpt"
+        else AutoModel.from_pretrained(model_name, config=config)
     )
     if cuda and not torch.cuda.is_available():
         logging.warning(
