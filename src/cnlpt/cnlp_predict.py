@@ -3,7 +3,7 @@ import logging
 from collections import defaultdict
 from itertools import chain, groupby
 from operator import itemgetter
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,8 @@ from transformers import EvalPrediction
 from .cnlp_processors import classification, relex, tagging
 
 logger = logging.getLogger(__name__)
+
+Cell = Tuple[int, int, int]
 
 
 def restructure_prediction(
@@ -30,7 +32,9 @@ def restructure_prediction(
 
     # disagreement collection stuff for this scope
     task_label_to_boundaries: Dict[str, Tuple[int, int]] = {}
-    task_label_to_label_packet: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+    task_label_to_label_packet: Dict[
+        str, Tuple[np.ndarray, np.ndarray, np.ndarray]
+    ] = {}
 
     for task_ind, task_name in enumerate(task_names):
         preds, labels, pad, prob_values = structure_labels(
@@ -80,7 +84,7 @@ def structure_labels(
 
     # for inference
     if not hasattr(p, "label_ids") or p.label_ids is None:
-        return preds, np.array([]), pad
+        return preds, np.array([]), pad, prob_values
     if relations[task_name]:
         # relation labels
         labels = p.label_ids[
@@ -153,12 +157,12 @@ def classification_disagreements(preds: np.ndarray, labels: np.ndarray) -> np.nd
 
 
 def tagging_disagreements(preds: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    (indices,) = np.where([*map(any, np.not_equal(preds, labels))])
+    (indices,) = np.where([any(neqs) for neqs in np.not_equal(preds, labels)])
     return indices
 
 
 def relation_disagreements(preds: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    (indices,) = np.where([*map(lambda s: s.any(), np.not_equal(preds, labels))])
+    (indices,) = np.where([neqs.any() for neqs in np.not_equal(preds, labels)])
     return indices
 
 
@@ -183,21 +187,26 @@ def process_prediction(
                 preds, labels, output_mode[task]
             )
 
-        relevant_indices: Iterable[int] = set(
-            map(int, chain.from_iterable(task_to_error_inds.values()))
+        relevant_indices: Sequence[int] = sorted(
+            int(error_ind)
+            for error_ind in chain.from_iterable(task_to_error_inds.values())
         )
 
     else:
         relevant_indices = range(len(eval_dataset["text"]))
 
-    classification_tasks = filter(
-        lambda t: output_mode[t] == classification, task_names
+    classification_tasks = (
+        task_name
+        for task_name in task_names
+        if output_mode[task_name] == classification
     )
 
-    tagging_tasks = filter(lambda t: output_mode[t] == tagging, task_names)
-
-    relex_tasks = filter(lambda t: output_mode[t] == relex, task_names)
-
+    tagging_tasks = (
+        task_name for task_name in task_names if output_mode[task_name] == tagging
+    )
+    relex_tasks = (
+        task_name for task_name in task_names if output_mode[task_name] == relex
+    )
     # ordering in terms of ease of reading
     out_table = pd.DataFrame(
         columns=["text", *classification_tasks, *tagging_tasks, *relex_tasks],
@@ -254,7 +263,7 @@ def get_output_list(
     task_labels: List[str],
     task2boundaries: Dict[str, Tuple[int, int]],
     prediction: np.ndarray,
-    labels: Union[None, np.ndarray],
+    labels: np.ndarray,
     output_mode: Dict[str, str],
     error_inds: np.ndarray,
     torch_labels: np.ndarray,
@@ -326,7 +335,7 @@ def get_classification_prints(
     if ground_truths is not None:
         ground_strings = [classification_labels[index] for index in ground_truths]
 
-        pred_list = [*map(clean_string, zip(ground_strings, predicted_labels))]
+        pred_list = [clean_string(gp) for gp in zip(ground_strings, predicted_labels)]
 
     if len(prob_values) == len(predicted_labels):
         return [
@@ -359,6 +368,14 @@ def get_tagging_prints(
             f'{key}: "{tokens[span[0]:span[1]]}"' for key, span in flatten_dict(d)
         )
 
+    def group_and_span(inds: List[int]) -> List[Tuple[int, int]]:
+        ranges = []
+        for _, group in groupby(enumerate(inds), lambda x: x[0] - x[1]):
+            index_group = [g[1] for g in group]
+            # adjusted for python list conventions
+            ranges.append((index_group[0], index_group[-1] + 1))
+        return ranges
+
     # since sometimes it's just
     # BIO with no suffixes and
     # we'll need to use the column name
@@ -372,15 +389,6 @@ def get_tagging_prints(
         raw_tag_inds: np.ndarray, token_ids: np.ndarray
     ) -> Dict[str, List[Tuple[int, int]]]:
         type2inds = defaultdict(list)
-
-        # courtesy of https://stackoverflow.com/a/2154437
-        def group_and_span(inds: List[int]) -> List[Tuple[int, int]]:
-            ranges = []
-            for k, g in groupby(enumerate(inds), lambda x: x[0] - x[1]):
-                group = [*map(itemgetter(1), g)]
-                # adjusted for python list slicing
-                ranges.append((group[0], group[-1] + 1))
-            return ranges
 
         raw_labels = [
             tagging_labels[label_idx]
@@ -407,11 +415,11 @@ def get_tagging_prints(
             pred_spans = pred_dict[key] if key in pred_dict.keys() else []
 
             ground_not_in_pred = [
-                *filter(lambda span: span not in pred_spans, ground_spans)
+                span for span in ground_spans if span not in pred_spans
             ]
 
             pred_not_in_ground = [
-                *filter(lambda span: span not in ground_spans, pred_spans)
+                span for span in pred_spans if span not in ground_spans
             ]
             disagreements["ground"][key].extend(ground_not_in_pred)
 
@@ -422,7 +430,7 @@ def get_tagging_prints(
     def get_error_out_string(
         disagreements: Dict[str, Dict[str, List[Tuple[int, int]]]], instance: str
     ) -> str:
-        instance_tokens = [*filter(None, instance.split())]
+        instance_tokens = list(filter(None, instance.split()))
 
         ground_string = (
             dict_to_str(disagreements["ground"], instance_tokens)
@@ -444,7 +452,7 @@ def get_tagging_prints(
     def get_pred_out_string(
         type2spans: Dict[str, List[Tuple[int, int]]], instance: str
     ):
-        instance_tokens = [*filter(None, instance.split())]
+        instance_tokens = list(filter(None, instance.split()))
 
         return dict_to_str(type2spans, instance_tokens)
 
@@ -483,8 +491,6 @@ def get_relex_prints(
     task_predictions: np.ndarray,
     torch_labels: np.ndarray,
 ) -> List[str]:
-    Cell = Tuple[int, int, int]
-
     resolved_predictions = task_predictions
     none_index = relex_labels.index("None") if "None" in relex_labels else -1
 
