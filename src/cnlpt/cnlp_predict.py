@@ -494,11 +494,11 @@ def get_relex_prints(
     resolved_predictions = task_predictions
     none_index = relex_labels.index("None") if "None" in relex_labels else -1
 
-    # thought we'd filtered them out but apparently not
-    def tuples_to_str(label_tuples: Iterable[Cell]):
-        return [
-            (row, col, relex_labels[label]) for row, col, label in sorted(label_tuples)
-        ]
+    def tuples_to_str(label_tuples: Iterable[Cell]) -> str:
+        return " ".join(
+            f"( {row}, {col}, {relex_labels[label]} )"
+            for row, col, label in sorted(label_tuples)
+        )
 
     def normalize_cells(
         raw_cells: np.ndarray, token_ids: np.ndarray
@@ -508,32 +508,15 @@ def get_relex_prints(
         np.fill_diagonal(raw_cells, -100)
 
         np.fill_diagonal(token_ids, -100)
+        (relevant_inds,) = np.where(token_ids != -100)
         reduced_matrix = np.array(
-            [
-                *filter(
-                    len,
-                    [
-                        mat_row[np.where(token_row != -100)]
-                        for mat_row, token_row in zip(raw_cells, token_ids)
-                    ],
-                )
-            ]
+            [raw_cells[index][relevant_inds] for index in relevant_inds]
         )
 
-        # adding the diagonal back in...
-        final_reduced_matrix = (
-            np.array(
-                [
-                    np.insert(row, row_idx, none_index, axis=0)
-                    for row_idx, row in enumerate(reduced_matrix)
-                ]
-            )
-            if len(reduced_matrix) > 0
-            else np.zeros((1, 1)) + none_index
-        )
+        np.fill_diagonal(reduced_matrix, -100)
 
-        assert final_reduced_matrix.shape[0] == final_reduced_matrix.shape[1]
-        return invalid_inds, final_reduced_matrix
+        assert reduced_matrix.shape[0] == reduced_matrix.shape[1]
+        return invalid_inds, reduced_matrix
 
     def find_disagreements(
         ground_pair: Tuple[np.ndarray, np.ndarray],
