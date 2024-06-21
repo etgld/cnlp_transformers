@@ -3,7 +3,7 @@ from time import time
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-# NB for the types of models one is likely to use here
+# NB: for the types of models one is likely to use here
 # all the documentation refers to techniques requiring BitsAndBytes as well as accelerate
 # both of which can be installed via:
 # pip install bitsandbytes accelerate
