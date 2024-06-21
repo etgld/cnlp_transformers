@@ -3,6 +3,12 @@ from time import time
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
+# NB for the types of models one is likely to use here
+# all the documentation refers to techniques requiring BitsAndBytes as well as accelerate
+# both of which can be installed via:
+# pip install bitsandbytes accelerate
+# (accelerate iirc should installed automatically when executing `pip install "transformers[torch]"`)
+
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
     "--examples_file",
@@ -45,6 +51,9 @@ def main() -> None:
     # auth tokens for things like Mixtral
     tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
 
+    # Getting a deprecation warning when using
+    # `load_in_4bit`, Hf says to switch to a quantization config such as
+    # https://huggingface.co/docs/transformers/en/main_classes/quantization#transformers.BitsAndBytesConfig
     model = AutoModelForCausalLM.from_pretrained(
         final_path, load_in_4bit=True, use_auth_token=True
     )
