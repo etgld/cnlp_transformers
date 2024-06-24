@@ -1,7 +1,7 @@
 import argparse
 from time import time
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 # NB: for the types of models one is likely to use here
 # all the documentation refers to techniques requiring BitsAndBytes as well as accelerate
@@ -20,6 +20,16 @@ parser.add_argument(
     type=str,
     default="/lab-share/CHIP-Savova-e2/Public/resources/llama-2/Llama-2-70b-chat-hf",
 )
+
+parser.add_argument(
+    "--attn_implementation",
+    type=str,
+    default="spda",
+    choices=["spda", "flash_attention_2"],
+)
+
+parser.add_argument("--load_in_4bit", action="store_true")
+parser.add_argument("--load_in_8bit", action="store_true")
 parser.add_argument("--model_name", choices=["llama2", "llama3", "mixtral", "qwen2"])
 
 
@@ -47,6 +57,9 @@ def main() -> None:
     else:
         final_path = args.model_path
     print(f"Loading tokenizer and model for model name {args.model_name}")
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit
+    )
     start = time()
     # auth tokens for things like Mixtral
     tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
@@ -54,18 +67,25 @@ def main() -> None:
     # Getting a deprecation warning when using
     # `load_in_4bit`, Hf says to switch to a quantization config such as
     # https://huggingface.co/docs/transformers/en/main_classes/quantization#transformers.BitsAndBytesConfig
-    model = AutoModelForCausalLM.from_pretrained(
-        final_path, load_in_4bit=True, use_auth_token=True
-    )
     # adding device map since that's a typical part of the
     # instructions for other cases
+    model = AutoModelForCausalLM.from_pretrained(
+        final_path,
+        load_in_4bit=True,
+        use_auth_token=True,
+        device_map="auto",
+        quantization_config=quantization_config,
+        attn_implementation=args.attn_implementation,
+    )
     # NB: check the model you are using to see if this
     # parameter is relevant
     # https://huggingface.co/docs/transformers/main/en/chat_templating#what-are-generation-prompts
-    pipeline = pipeline(
-        "text-generation", model=model, tokenizer=tokenizer, device_map="auto"
-    )
-
+    # pipeline = pipeline(
+    #     "text-generation", model=model, tokenizer=tokenizer, device_map="auto"
+    # )
+    # while notionally the pipeline interface takes care of the apply_chat_template
+    # I'm starting to think it's more idiomatic to make that explicit
+    # since I'm not sure that method always existed in previous versions of transformers
     end = time()
     print(f"Loading model took {end-start} seconds")
 
