@@ -1,6 +1,7 @@
 import argparse
+from collections import deque
 from time import time
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple, cast
 from itertools import chain
 from tqdm import tqdm
 import pandas as pd
@@ -36,7 +37,9 @@ parser.add_argument(
     type=int,
     help="1 for classification, on the order of 128 for BIO, on the order of 1024 for free text analysis and explanation",
 )
-parser.add_argument("--input_file", type=str, help="TSVs for now")
+parser.add_argument(
+    "--queries_file", type=str, help="TSVs for now, JSON or whatever else eventually"
+)
 parser.add_argument("--output_file", type=str)
 
 name2path = {
@@ -75,17 +78,26 @@ def main() -> None:
     )
     end = time()
     print(f"Loading model took {end-start} seconds")
-    few_shot_llama_answers = []
+    model_answers = deque()
     # Can't really find an idiomatic way to do this with
     # Hf Datasets.  My guess is part of this has to
     # do with best practices (or lack thereof?)
     # around how to best pad/trunctate input length
+    system_prompt = get_system_prompt(args.prompt_file)
+    queries = get_queries(args.queries_file)
+    get_prompt = lambda p, q: []
+    if args.examples_file is not None:
+        examples = get_examples(args.examples_file)
+        if len(examples) > 0:
+            get_prompt = lambda p, q: few_shot_prompt(
+                system_prompt=p, query=q, examples=examples
+            )
+    else:
+        get_prompt = lambda p, q: zero_shot_prompt(system_prompt=p, query=q)
     for query in tqdm(queries):
-        few_shot_prompt_messages = few_shot_prompt(
-            PROMPT, query, few_shot_prompts
-        )
+        prompt_messages = get_prompt(system_prompt, query)
         input_ids = tokenizer.apply_chat_template(
-            few_shot_prompt_messages, tokenize=True, return_tensors="pt"
+            prompt_messages, tokenize=True, return_tensors="pt"
         ).cuda()
         outputs = model.generate(
             input_ids=input_ids, max_new_tokens=args.max_new_tokens, do_sample=False
@@ -94,7 +106,30 @@ def main() -> None:
             outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
             skip_special_tokens=True,
         )[0]
-        few_shot_llama_answers.append(gen_text.strip())
+        model_answers.append(gen_text.strip())
+    output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
+    output_df.to_csv(args.output_file, index=False, sep="\t")
+    print("Finished writing results")
+
+
+def get_system_prompt(prompt_file_path: str) -> str:
+    with open(prompt_file_path, mode="rt", encoding="utf-8") as f:
+        raw_prompt = f.read()
+        cleaned_prompt = " ".join(raw_prompt.strip().split())
+        return cleaned_prompt
+
+
+def get_queries(queries_file_path: str) -> Iterable[str]:
+    full_dataframe = pd.read_csv(queries_file_path, sep="\t")
+    queries = cast(Iterable[str], full_dataframe["query"])
+    return queries
+
+
+def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
+    full_dataframe = pd.read_csv(examples_file_path, sep="\t")
+    queries = cast(Iterable[str], full_dataframe["query"])
+    responses = cast(Iterable[str], full_dataframe["response"])
+    return list(zip(queries, responses))
 
 
 def zero_shot_prompt(system_prompt: str, query: str) -> List[Message]:
@@ -106,7 +141,7 @@ def zero_shot_prompt(system_prompt: str, query: str) -> List[Message]:
 
 
 def few_shot_prompt(
-    system_prompt: str, query: str, examples: List[Tuple[str, str]]
+    system_prompt: str, query: str, examples: Iterable[Tuple[str, str]]
 ) -> List[Message]:
     def message_pair(ex_query: str, ex_answer: str) -> Tuple[Message, ...]:
         return {"role": "user", "content": ex_query}, {
