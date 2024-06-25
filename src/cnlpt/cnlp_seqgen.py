@@ -1,13 +1,11 @@
 import argparse
 from time import time
+from typing import Dict, List, Tuple
+from itertools import chain
+from tqdm import tqdm
+import pandas as pd
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-
-# NB: for the types of models one is likely to use here
-# all the documentation refers to techniques requiring BitsAndBytes as well as accelerate
-# both of which can be installed via:
-# pip install bitsandbytes accelerate
-# (accelerate iirc should installed automatically when executing `pip install "transformers[torch]"`)
 
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
@@ -48,6 +46,9 @@ name2path = {
     "qwen2": "Qwen/Qwen2-1.5B-Instruct",
 }
 
+# {role: {system|user|assistant}, content: ...}
+Message = Dict[str, str]
+
 
 def main() -> None:
     args = parser.parse_args()
@@ -64,11 +65,6 @@ def main() -> None:
     # auth tokens for things like Mixtral
     tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
 
-    # Getting a deprecation warning when using
-    # `load_in_4bit`, Hf says to switch to a quantization config such as
-    # https://huggingface.co/docs/transformers/en/main_classes/quantization#transformers.BitsAndBytesConfig
-    # adding device map since that's a typical part of the
-    # instructions for other cases
     model = AutoModelForCausalLM.from_pretrained(
         final_path,
         load_in_4bit=True,
@@ -77,43 +73,58 @@ def main() -> None:
         quantization_config=quantization_config,
         attn_implementation=args.attn_implementation,
     )
-    # NB: check the model you are using to see if this
-    # parameter is relevant
-    # https://huggingface.co/docs/transformers/main/en/chat_templating#what-are-generation-prompts
-    # pipeline = pipeline(
-    #     "text-generation", model=model, tokenizer=tokenizer, device_map="auto"
-    # )
-    # while notionally the pipeline interface takes care of the apply_chat_template
-    # I'm starting to think it's more idiomatic to make that explicit
-    # since I'm not sure that method always existed in previous versions of transformers
     end = time()
     print(f"Loading model took {end-start} seconds")
+    few_shot_llama_answers = []
+    # Can't really find an idiomatic way to do this with
+    # Hf Datasets.  My guess is part of this has to
+    # do with best practices (or lack thereof?)
+    # around how to best pad/trunctate input length
+    for query in tqdm(queries):
+        few_shot_prompt_messages = few_shot_prompt(
+            PROMPT, query, few_shot_prompts
+        )
+        input_ids = tokenizer.apply_chat_template(
+            few_shot_prompt_messages, tokenize=True, return_tensors="pt"
+        ).cuda()
+        outputs = model.generate(
+            input_ids=input_ids, max_new_tokens=args.max_new_tokens, do_sample=False
+        )
+        gen_text = tokenizer.batch_decode(
+            outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
+            skip_special_tokens=True,
+        )[0]
+        few_shot_llama_answers.append(gen_text.strip())
 
-    # Have a flag for interactive mode but for now keep it to
-    # current cnlpt functionality
-    # while True:
-    #     # Get user input:
-    #     prompt = input("Enter the prompt you would like to give the model:\n>")
-    #     if len(prompt) == 0:
-    #         continue
 
-    #     start = time()
-    #     sequences = pipeline(
-    #         prompt,
-    #         do_sample=True,
-    #         top_k=10,
-    #         num_return_sequences=1,
-    #         eos_token_id=tokenizer.eos_token_id,
-    #         max_length=1000,
-    #     )
-    #     end = time()
+def zero_shot_prompt(system_prompt: str, query: str) -> List[Message]:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": query},
+    ]
+    return messages
 
-    #     for seq_ind, seq in enumerate(sequences):
-    #         print(f"************* Response {seq_ind} *************")
-    #         print(f"{seq['generated_text']}")
-    #         print(f"************* End response {seq_ind} ************\n\n")
 
-    #     print(f"Response generated in {end-start} s")
+def few_shot_prompt(
+    system_prompt: str, query: str, examples: List[Tuple[str, str]]
+) -> List[Message]:
+    def message_pair(ex_query: str, ex_answer: str) -> Tuple[Message, ...]:
+        return {"role": "user", "content": ex_query}, {
+            "role": "assistant",
+            "content": ex_answer,
+        }
+
+    few_shot_examples = chain.from_iterable(
+        message_pair(ex_query=ex_query, ex_answer=ex_answer)
+        for ex_query, ex_answer in examples
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        *few_shot_examples,
+        {"role": "user", "content": query},
+    ]
+    return messages
 
 
 if __name__ == "__main__":
