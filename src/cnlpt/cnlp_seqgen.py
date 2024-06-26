@@ -108,7 +108,7 @@ def main() -> None:
             outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
             skip_special_tokens=True,
         )[0]
-        model_answers.append(gen_text.strip())
+        model_answers.append((" ".join(gen_text.strip().split()),))
     output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
     output_df.to_csv(args.output_file, index=False, sep="\t")
     print("Finished writing results")
