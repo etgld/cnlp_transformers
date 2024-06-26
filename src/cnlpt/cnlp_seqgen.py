@@ -64,20 +64,7 @@ def main() -> None:
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit
     )
-    start = time()
-    # auth tokens for things like Mixtral
-    tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        final_path,
-        load_in_4bit=True,
-        use_auth_token=True,
-        device_map="auto",
-        quantization_config=quantization_config,
-        attn_implementation=args.attn_implementation,
-    )
-    end = time()
-    print(f"Loading model took {end-start} seconds")
     model_answers = deque()
     # Can't really find an idiomatic way to do this with
     # Hf Datasets.  My guess is part of this has to
@@ -94,6 +81,21 @@ def main() -> None:
             )
     else:
         get_prompt = lambda p, q: zero_shot_prompt(system_prompt=p, query=q)
+    start = time()
+    # auth tokens for things like Mixtral
+    tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
+
+    model = AutoModelForCausalLM.from_pretrained(
+        final_path,
+        use_auth_token=True,
+        device_map="auto",
+        quantization_config=quantization_config,
+        # apparently this isn't idiomatic and you're
+        # supposed to load this via the model config
+        # attn_implementation=args.attn_implementation,
+    )
+    end = time()
+    print(f"Loading model took {end-start} seconds")
     for query in tqdm(queries):
         prompt_messages = get_prompt(system_prompt, query)
         input_ids = tokenizer.apply_chat_template(
