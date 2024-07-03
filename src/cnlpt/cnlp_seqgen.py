@@ -1,4 +1,5 @@
 import argparse
+import pathlib
 from collections import deque
 from time import time
 from typing import Dict, Iterable, List, Tuple, cast
@@ -60,7 +61,7 @@ def main() -> None:
         final_path = name2path[args.model_name]
     else:
         final_path = args.model_path
-    print(f"Loading tokenizer and model for model name {args.model_name}")
+    print(f"Loading tokenizer and model for model name {final_path}")
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit
     )
@@ -72,6 +73,7 @@ def main() -> None:
     # around how to best pad/trunctate input length
     system_prompt = get_system_prompt(args.prompt_file)
     queries = get_queries(args.queries_file)
+    print(queries)
     get_prompt = lambda p, q: []
     if args.examples_file is not None:
         examples = get_examples(args.examples_file)
@@ -122,9 +124,23 @@ def get_system_prompt(prompt_file_path: str) -> str:
 
 
 def get_queries(queries_file_path: str) -> Iterable[str]:
-    full_dataframe = pd.read_csv(queries_file_path, sep="\t")
-    queries = cast(Iterable[str], full_dataframe["query"])
-    return queries
+    # NB, this will retrieve the extension with the "." at the front
+    # e.g. ".txt" rather than "txt"
+    suffix = pathlib.Path(queries_file_path).suffix.lower()
+    match suffix:
+        case ".tsv":
+            full_dataframe = pd.read_csv(queries_file_path, sep="\t")
+            queries = cast(Iterable[str], full_dataframe["query"])
+            return queries
+        case ".txt":
+            with open(queries_file_path, mode="rt") as qf:
+                query = qf.read()
+                result = (query,)
+                print(result)
+                return result
+        case "_":
+            ValueError(f"Presently unsupported query format {suffix}")
+            return ("",)
 
 
 def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
