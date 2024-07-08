@@ -138,7 +138,7 @@ def get_queries(queries_file_path: str) -> Iterable[str]:
                 result = (query,)
                 print(result)
                 return result
-        case "_":
+        case _:
             ValueError(f"Presently unsupported query format {suffix}")
             return ("",)
 
