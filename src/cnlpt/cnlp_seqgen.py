@@ -1,5 +1,6 @@
 import argparse
 import pathlib
+import os
 from collections import deque
 from time import time
 from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
@@ -47,9 +48,12 @@ parser.add_argument(
     help="1 for classification, on the order of 128 for BIO, on the order of 1024 for free text analysis and explanation",
 )
 parser.add_argument(
-    "--queries_file", type=str, help="TSVs for now, JSON or whatever else eventually"
+    "--query_files",
+    nargs="+",
+    default=[],
+    help="TSVs for now, JSON or whatever else eventually",
 )
-parser.add_argument("--output_file", type=str)
+parser.add_argument("--output_dir", type=str)
 
 name2path = {
     "llama2": "/lab-share/CHIP-Savova-e2/Public/resources/llama-2/Llama-2-70b-chat-hf",
@@ -80,7 +84,7 @@ def main() -> None:
     # do with best practices (or lack thereof?)
     # around how to best pad/trunctate input length
     system_prompt = get_system_prompt(args.prompt_file)
-    queries = get_queries(args.queries_file)
+    fn_to_queries = {q_fn: get_queries(q_fn) for q_fn in args.query_files}
 
     def few_shot_with_examples(
         examples: Iterable[Tuple[str, str]]
@@ -127,21 +131,24 @@ def main() -> None:
     )
     end = time()
     print(f"Loading model took {end-start} seconds")
-    for query in tqdm(queries):
-        prompt_messages = get_prompt(system_prompt, query)
-        input_ids = tokenizer.apply_chat_template(
-            prompt_messages, tokenize=True, return_tensors="pt"
-        ).cuda()
-        outputs = model.generate(
-            input_ids=input_ids, max_new_tokens=args.max_new_tokens, do_sample=False
-        )
-        gen_text = tokenizer.batch_decode(
-            outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
-            skip_special_tokens=True,
-        )[0]
-        model_answers.append((" ".join(gen_text.strip().split()),))
-    output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
-    output_df.to_csv(args.output_file, index=False, sep="\t")
+    pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    for q_fn, queries in fn_to_queries.items():
+        for query in tqdm(queries):
+            prompt_messages = get_prompt(system_prompt, query)
+            input_ids = tokenizer.apply_chat_template(
+                prompt_messages, tokenize=True, return_tensors="pt"
+            ).cuda()
+            outputs = model.generate(
+                input_ids=input_ids, max_new_tokens=args.max_new_tokens, do_sample=False
+            )
+            gen_text = tokenizer.batch_decode(
+                outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
+                skip_special_tokens=True,
+            )[0]
+            model_answers.append((" ".join(gen_text.strip().split()),))
+        output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
+        out_fn = os.path.join(args.output_dir, os.path.basename(q_fn))
+        output_df.to_csv(f"{out_fn}.tsv", index=False, sep="\t")
     print("Finished writing results")
 
 
@@ -156,11 +163,11 @@ def get_queries(queries_file_path: str) -> Iterable[str]:
     # NB, this will retrieve the extension with the "." at the front
     # e.g. ".txt" rather than "txt"
     suffix = pathlib.Path(queries_file_path).suffix.lower()
-    match suffix:
+    match suffix.strip():
         case ".tsv":
             full_dataframe = pd.read_csv(queries_file_path, sep="\t")
             queries = cast(Iterable[str], full_dataframe["query"])
-        case ".txt":
+        case ".txt" | "":
             with open(queries_file_path, mode="rt") as qf:
                 query = qf.read()
                 queries = (query,)
