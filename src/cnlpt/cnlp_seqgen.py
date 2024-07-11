@@ -2,7 +2,7 @@ import argparse
 import pathlib
 from collections import deque
 from time import time
-from typing import Dict, Iterable, List, Tuple, cast
+from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
 from itertools import chain
 from tqdm import tqdm
 import pandas as pd
@@ -12,6 +12,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
     "--examples_file",
+    type=str,
+)
+parser.add_argument(
+    "--sample_document",
+    type=str,
+)
+parser.add_argument(
+    "--sample_answer",
     type=str,
 )
 parser.add_argument("--prompt_file", type=str)
@@ -66,23 +74,44 @@ def main() -> None:
         load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit
     )
 
-    model_answers = deque()
+    model_answers: Deque[Tuple[str,]] = deque()
     # Can't really find an idiomatic way to do this with
     # Hf Datasets.  My guess is part of this has to
     # do with best practices (or lack thereof?)
     # around how to best pad/trunctate input length
     system_prompt = get_system_prompt(args.prompt_file)
     queries = get_queries(args.queries_file)
-    print(queries)
-    get_prompt = lambda p, q: []
+
+    def few_shot_with_examples(
+        examples: Iterable[Tuple[str, str]]
+    ) -> Callable[[str, str], List[Message]]:
+        def _few_shot_prompt(s, q):
+            return few_shot_prompt(system_prompt=s, query=q, examples=examples)
+
+        return _few_shot_prompt
+
+    def empty_prompt(system_prompt: str, query: str) -> List[Message]:
+        return []
+
     if args.examples_file is not None:
         examples = get_examples(args.examples_file)
         if len(examples) > 0:
-            get_prompt = lambda p, q: few_shot_prompt(
-                system_prompt=p, query=q, examples=examples
-            )
+            get_prompt = few_shot_with_examples(examples=examples)
+
+        else:
+            ValueError("Empty examples file")
+
+            get_prompt = empty_prompt
+    elif args.sample_document is not None and args.sample_answer is not None:
+        example = get_document_level_example(args.sample_document, args.sample_answer)
+        if all(example):
+            get_prompt = few_shot_with_examples(examples=(example,))
+        else:
+            ValueError("Empty sample document and/or empty sample answer")
+
+            get_prompt = empty_prompt
     else:
-        get_prompt = lambda p, q: zero_shot_prompt(system_prompt=p, query=q)
+        get_prompt = zero_shot_prompt
     start = time()
     # auth tokens for things like Mixtral
     tokenizer = AutoTokenizer.from_pretrained(final_path, use_auth_token=True)
@@ -131,16 +160,14 @@ def get_queries(queries_file_path: str) -> Iterable[str]:
         case ".tsv":
             full_dataframe = pd.read_csv(queries_file_path, sep="\t")
             queries = cast(Iterable[str], full_dataframe["query"])
-            return queries
         case ".txt":
             with open(queries_file_path, mode="rt") as qf:
                 query = qf.read()
-                result = (query,)
-                print(result)
-                return result
+                queries = (query,)
         case _:
             ValueError(f"Presently unsupported query format {suffix}")
-            return ("",)
+            queries = ("",)
+    return queries
 
 
 def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
@@ -148,6 +175,18 @@ def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
     queries = cast(Iterable[str], full_dataframe["query"])
     responses = cast(Iterable[str], full_dataframe["response"])
     return list(zip(queries, responses))
+
+
+def get_document_level_example(
+    sample_document_path: str, sample_answer_path: str
+) -> Tuple[str, str]:
+    with open(sample_document_path, mode="rt", encoding="utf-8") as sample_document:
+        # not normalizing newlines since those might be useful
+        query = sample_document.read()
+    sample_answer_dataframe = pd.read_csv(sample_answer_path, sep="\t")
+    # specific to earlier use-case etc but for now
+    answer = "\n".join(cast(Iterable[str], sample_answer_dataframe["query"]))
+    return (query, answer)
 
 
 def zero_shot_prompt(system_prompt: str, query: str) -> List[Message]:
