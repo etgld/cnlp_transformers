@@ -39,6 +39,7 @@ parser.add_argument(
 
 parser.add_argument("--load_in_4bit", action="store_true")
 parser.add_argument("--load_in_8bit", action="store_true")
+parser.add_argument("--fancy_output", action="store_true")
 parser.add_argument("--model_name", choices=["llama2", "llama3", "mixtral", "qwen2"])
 
 
@@ -158,13 +159,24 @@ def main() -> None:
             # model_answers.append((" ".join(gen_text.strip().split()),))
             model_answers.append((gen_text.strip(),))
         output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
-        out_fn = os.path.join(args.output_dir, os.path.basename(q_fn)) + ".txt"
-        # output_df.to_csv(f"{out_fn}.tsv", index=False, sep="\t")
-        with open(out_fn, mode="wt", encoding="utf-8") as out_f:
-            for answer in model_answers:
-                (answer_str,) = answer
-                out_f.write(answer_str + "\n")
+        out_fn = f"{pathlib.Path(q_fn).stem}_{pathlib.Path(args.prompt_file).stem}.txt"
+        out_path = os.path.join(args.output_dir, out_fn)
+        # output_df.to_csv(f"{out_path}.tsv", index=False, sep="\t")
+        with open(out_path, mode="wt", encoding="utf-8") as out_f:
+            if args.fancy_output:
+                for index, q_and_a in enumerate(zip(queries, model_answers)):
+                    query, answer = q_and_a
+                    (answer_str,) = answer
+                    out_f.write(structure_response(index, query, answer_str))
+            else:
+                for answer in model_answers:
+                    (answer_str,) = answer
+                    out_f.write(answer_str + "\n")
     print("Finished writing results")
+
+
+def structure_response(index: int, query: str, answer: str) -> str:
+    return f"Query {index}:\n{query}\nAnswer:\n{answer}\n\n"
 
 
 def get_system_prompt(prompt_file_path: str) -> str:
