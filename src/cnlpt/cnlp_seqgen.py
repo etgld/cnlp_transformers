@@ -143,6 +143,8 @@ def main() -> None:
     print(f"Loading model took {end-start} seconds")
     pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     for q_fn, queries in fn_to_queries.items():
+        # tuple wrapper thing is a weird thing I
+        # had to do to get pandas to stop complaining
         model_answers: Deque[Tuple[str,]] = deque()
         for query in tqdm(queries):
             prompt_messages = get_prompt(system_prompt, query)
@@ -158,8 +160,8 @@ def main() -> None:
             )[0]
             # model_answers.append((" ".join(gen_text.strip().split()),))
             model_answers.append((gen_text.strip(),))
-        output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
-        out_fn = f"{pathlib.Path(q_fn).stem}_{pathlib.Path(args.prompt_file).stem}.txt"
+        # output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
+        out_fn = f"{basename_no_ext(q_fn)}_{basename_no_ext(args.promt_file)}.txt"
         out_path = os.path.join(args.output_dir, out_fn)
         # output_df.to_csv(f"{out_path}.tsv", index=False, sep="\t")
         with open(out_path, mode="wt", encoding="utf-8") as out_f:
@@ -179,11 +181,16 @@ def structure_response(index: int, query: str, answer: str) -> str:
     return f"Query {index}:\n{query}\nAnswer:\n{answer}\n\n"
 
 
+def basename_no_ext(fn: str) -> str:
+    return pathlib.Path(fn).stem.strip()
+
+
 def get_system_prompt(prompt_file_path: str) -> str:
     with open(prompt_file_path, mode="rt", encoding="utf-8") as f:
         raw_prompt = f.read()
-        cleaned_prompt = " ".join(raw_prompt.strip().split())
-        return cleaned_prompt
+        # cleaned_prompt = " ".join(raw_prompt.strip().split())
+        # return cleaned_prompt
+        return raw_prompt
 
 
 def get_queries(queries_file_path: str) -> Iterable[str]:
