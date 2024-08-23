@@ -1,6 +1,7 @@
 import argparse
 import pathlib
 import os
+import re
 from collections import deque
 from time import time
 from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
@@ -14,6 +15,7 @@ parser = argparse.ArgumentParser(description="")
 parser.add_argument(
     "--examples_file",
     type=str,
+    help="Check the `get_examples` method for the possible formats for now",
 )
 parser.add_argument(
     "--sample_document",
@@ -147,7 +149,12 @@ def main() -> None:
         # had to do to get pandas to stop complaining
         model_answers: Deque[Tuple[str,]] = deque()
         for query in tqdm(queries):
+            print("______ Debugging Output ______")
             prompt_messages = get_prompt(system_prompt, query)
+            print("Prompt messages:")
+            for prompt_message in prompt_messages:
+                for role, content in prompt_message.items():
+                    print(f"{role}: {content}")
             input_ids = tokenizer.apply_chat_template(
                 prompt_messages, tokenize=True, return_tensors="pt"
             ).cuda()
@@ -158,6 +165,8 @@ def main() -> None:
                 outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
                 skip_special_tokens=True,
             )[0]
+            print("Generated response")
+            print(gen_text)
             # model_answers.append((" ".join(gen_text.strip().split()),))
             model_answers.append((gen_text.strip(),))
         # output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
@@ -207,15 +216,43 @@ def get_queries(queries_file_path: str) -> Iterable[str]:
                 queries = (query,)
         case _:
             ValueError(f"Presently unsupported query format {suffix}")
-            queries = ("",)
+            queries = []
     return queries
 
 
 def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
-    full_dataframe = pd.read_csv(examples_file_path, sep="\t")
-    queries = cast(Iterable[str], full_dataframe["query"])
-    responses = cast(Iterable[str], full_dataframe["response"])
-    return list(zip(queries, responses))
+    suffix = pathlib.Path(examples_file_path).suffix.lower()
+    match suffix.strip():
+        case ".tsv":
+            full_dataframe = pd.read_csv(examples_file_path, sep="\t")
+            queries = cast(Iterable[str], full_dataframe["query"])
+            responses = cast(Iterable[str], full_dataframe["response"])
+            examples = list(zip(queries, responses))
+        case ".txt" | "":
+            examples = parse_input_output(examples_file_path)
+        case _:
+            ValueError(f"Presently unsupported examples file format {suffix}")
+            examples = []
+    return examples
+
+
+def parse_input_output(examples_file_path: str) -> List[Tuple[str, str]]:
+    def parse_example(raw_example: str) -> Tuple[str, str]:
+        result = tuple(
+            elem.strip()
+            for elem in re.split("input:|output:", raw_example)
+            if len(elem.strip()) > 0
+        )
+        assert len(result) == 2
+        return result
+
+    with open(examples_file_path, mode="rt", encoding="utf-8") as ef:
+        raw_str = ef.read()
+        return [
+            parse_example(example.strip())
+            for example in raw_str.split("\n\n")
+            if len(example.split()) > 0
+        ]
 
 
 def get_document_level_example(
