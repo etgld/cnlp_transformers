@@ -170,7 +170,7 @@ def main() -> None:
             # model_answers.append((" ".join(gen_text.strip().split()),))
             model_answers.append((gen_text.strip(),))
         # output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
-        out_fn = f"{basename_no_ext(q_fn)}_{basename_no_ext(args.promt_file)}.txt"
+        out_fn = f"{basename_no_ext(q_fn)}_{basename_no_ext(args.prompt_file)}_{basename_no_ext(args.examples_file)}.txt"
         out_path = os.path.join(args.output_dir, out_fn)
         # output_df.to_csv(f"{out_path}.tsv", index=False, sep="\t")
         with open(out_path, mode="wt", encoding="utf-8") as out_f:
