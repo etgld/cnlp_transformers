@@ -2,6 +2,7 @@ import argparse
 import pathlib
 import os
 import re
+import logging
 from collections import deque
 from time import time
 from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
@@ -71,6 +72,14 @@ name2path = {
 
 # {role: {system|user|assistant}, content: ...}
 Message = Dict[str, str]
+
+logger = logging.getLogger(__name__)
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    level=logging.INFO,
+)
 
 
 def main() -> None:
@@ -145,44 +154,31 @@ def main() -> None:
     print(f"Loading model took {end-start} seconds")
     pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     for q_fn, queries in fn_to_queries.items():
-        # tuple wrapper thing is a weird thing I
-        # had to do to get pandas to stop complaining
-        model_answers: Deque[Tuple[str,]] = deque()
-        for query in tqdm(queries):
-            print("______ Debugging Output ______")
-            prompt_messages = get_prompt(system_prompt, query)
-            print("Prompt messages:")
-            for prompt_message in prompt_messages:
-                for role, content in prompt_message.items():
-                    print(f"{role}: {content}")
-            input_ids = tokenizer.apply_chat_template(
-                prompt_messages, tokenize=True, return_tensors="pt"
-            ).cuda()
-            outputs = model.generate(
-                input_ids=input_ids, max_new_tokens=args.max_new_tokens, do_sample=False
-            )
-            gen_text = tokenizer.batch_decode(
-                outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
-                skip_special_tokens=True,
-            )[0]
-            print("Generated response")
-            print(gen_text)
-            # model_answers.append((" ".join(gen_text.strip().split()),))
-            model_answers.append((gen_text.strip(),))
-        # output_df = pd.DataFrame.from_records(model_answers, columns=["answers"])
         out_fn = f"{basename_no_ext(q_fn)}_{basename_no_ext(args.prompt_file)}_{basename_no_ext(args.examples_file)}.txt"
         out_path = os.path.join(args.output_dir, out_fn)
-        # output_df.to_csv(f"{out_path}.tsv", index=False, sep="\t")
         with open(out_path, mode="wt", encoding="utf-8") as out_f:
-            if args.fancy_output:
-                for index, q_and_a in enumerate(zip(queries, model_answers)):
-                    query, answer = q_and_a
-                    (answer_str,) = answer
-                    out_f.write(structure_response(index, query, answer_str))
-            else:
-                for answer in model_answers:
-                    (answer_str,) = answer
-                    out_f.write(answer_str + "\n")
+            for query in tqdm(queries):
+                input_ids = tokenizer.apply_chat_template(
+                    prompt_messages, tokenize=True, return_tensors="pt"
+                ).cuda()
+                outputs = model.generate(
+                    input_ids=input_ids,
+                    max_new_tokens=args.max_new_tokens,
+                    do_sample=False,
+                )
+                gen_text = tokenizer.batch_decode(
+                    outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
+                    skip_special_tokens=True,
+                )[0]
+                if args.fancy_output:
+                    for index, q_and_a in enumerate(zip(queries, model_answers)):
+                        query, answer = q_and_a
+                        (answer_str,) = answer
+                        out_f.write(structure_response(index, query, answer_str))
+                else:
+                    for answer in model_answers:
+                        (answer_str,) = answer
+                        out_f.write(answer_str + "\n")
     print("Finished writing results")
 
 
