@@ -9,6 +9,8 @@ from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
 from itertools import chain
 from tqdm import tqdm
 import pandas as pd
+import datetime
+import pytz
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
@@ -89,7 +91,7 @@ def main() -> None:
         final_path = name2path[args.model_name]
     else:
         final_path = args.model_path
-    print(f"Loading tokenizer and model for model name {final_path}")
+    logger.info(f"Loading tokenizer and model for model name {final_path}")
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit
     )
@@ -151,35 +153,34 @@ def main() -> None:
         # attn_implementation=args.attn_implementation,
     )
     end = time()
-    print(f"Loading model took {end-start} seconds")
-    pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    logger.info(f"Loading model took {end-start} seconds")
     for q_fn, queries in fn_to_queries.items():
-        out_fn = f"{basename_no_ext(q_fn)}_{basename_no_ext(args.prompt_file)}_{basename_no_ext(args.examples_file)}.txt"
+        current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
+        out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
+        out_dir = f"{args.output_dir}/{basename_no_ext(q_fn)}/{basename_no_ext(final_path)}/{basename_no_ext(args.prompt_file)}/{basename_no_ext(args.examples_file)}"
+        pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
         out_path = os.path.join(args.output_dir, out_fn)
         with open(out_path, mode="wt", encoding="utf-8") as out_f:
-            for query in tqdm(queries):
+            for index, query in enumerate(tqdm(queries)):
+                prompt_messages = get_prompt(system_prompt, query)
                 input_ids = tokenizer.apply_chat_template(
                     prompt_messages, tokenize=True, return_tensors="pt"
                 ).cuda()
+                logger.info(f"Total Messages Tokenized Length {len(input_ids[0])}, Hf Unreliable API, Refer to {basename_no_ext(final_path)}")
                 outputs = model.generate(
                     input_ids=input_ids,
                     max_new_tokens=args.max_new_tokens,
                     do_sample=False,
                 )
-                gen_text = tokenizer.batch_decode(
+                answer = tokenizer.batch_decode(
                     outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
                     skip_special_tokens=True,
                 )[0]
                 if args.fancy_output:
-                    for index, q_and_a in enumerate(zip(queries, model_answers)):
-                        query, answer = q_and_a
-                        (answer_str,) = answer
-                        out_f.write(structure_response(index, query, answer_str))
+                    out_f.write(structure_response(index, query, answer))
                 else:
-                    for answer in model_answers:
-                        (answer_str,) = answer
-                        out_f.write(answer_str + "\n")
-    print("Finished writing results")
+                    out_f.write(answer + "\n")
+    logger.info("Finished writing results")
 
 
 def structure_response(index: int, query: str, answer: str) -> str:
