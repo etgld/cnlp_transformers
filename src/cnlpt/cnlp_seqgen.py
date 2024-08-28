@@ -155,27 +155,27 @@ def main() -> None:
     end = time()
     logger.info(f"Loading model took {end-start} seconds")
     for q_fn, queries in fn_to_queries.items():
-        current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
-        out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
         out_dir = f"{args.output_dir}/{basename_no_ext(q_fn)}/{basename_no_ext(final_path)}/{basename_no_ext(args.prompt_file)}/{basename_no_ext(args.examples_file)}"
         pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
-        out_path = os.path.join(args.output_dir, out_fn)
-        with open(out_path, mode="wt", encoding="utf-8") as out_f:
-            for index, query in enumerate(tqdm(queries)):
-                prompt_messages = get_prompt(system_prompt, query)
-                input_ids = tokenizer.apply_chat_template(
-                    prompt_messages, tokenize=True, return_tensors="pt"
-                ).cuda()
-                logger.info(f"Total Messages Tokenized Length {len(input_ids[0])}, Hf Unreliable API, Refer to {basename_no_ext(final_path)}")
-                outputs = model.generate(
-                    input_ids=input_ids,
-                    max_new_tokens=args.max_new_tokens,
-                    do_sample=False,
-                )
-                answer = tokenizer.batch_decode(
-                    outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
-                    skip_special_tokens=True,
-                )[0]
+        current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
+        out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
+        out_path = os.path.join(out_dir, out_fn)
+        for index, query in enumerate(tqdm(queries)):
+            prompt_messages = get_prompt(system_prompt, query)
+            input_ids = tokenizer.apply_chat_template(
+                prompt_messages, tokenize=True, return_tensors="pt"
+            ).cuda()
+            logger.info(f"Total Messages Tokenized Length {len(input_ids[0])}, Hf Unreliable API, Refer to {basename_no_ext(final_path)}")
+            outputs = model.generate(
+                input_ids=input_ids,
+                max_new_tokens=args.max_new_tokens,
+                do_sample=False,
+            )
+            answer = tokenizer.batch_decode(
+                outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
+                skip_special_tokens=True,
+            )[0]
+            with open(out_path, mode="wt", encoding="utf-8") as out_f:
                 if args.fancy_output:
                     out_f.write(structure_response(index, query, answer))
                 else:
