@@ -12,7 +12,7 @@ import pandas as pd
 import datetime
 import pytz
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import pipeline, BitsAndBytesConfig
 
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
@@ -141,16 +141,12 @@ def main() -> None:
         get_prompt = zero_shot_prompt
     start = time()
     # auth tokens for things like Mixtral
-    tokenizer = AutoTokenizer.from_pretrained(final_path)  # , use_auth_token=True)
-
-    model = AutoModelForCausalLM.from_pretrained(
-        final_path,
+    seqgen_pipe = pipeline(
+        "text-generation",
+        model=final_path,
+        # device="cuda",
         # use_auth_token=True,
-        device_map="auto",
-        quantization_config=quantization_config,
-        # apparently this isn't idiomatic and you're
-        # supposed to load this via the model config
-        # attn_implementation=args.attn_implementation,
+        model_kwargs={"quantization_config": quantization_config, "device_map" : "auto"},
     )
     end = time()
     logger.info(f"Loading model took {end-start} seconds")
@@ -162,20 +158,18 @@ def main() -> None:
         out_path = os.path.join(out_dir, out_fn)
         for index, query in enumerate(tqdm(queries)):
             prompt_messages = get_prompt(system_prompt, query)
-            input_ids = tokenizer.apply_chat_template(
-                prompt_messages, tokenize=True, return_tensors="pt"
-            ).cuda()
-            logger.info(f"Total Messages Tokenized Length {len(input_ids[0])}, Hf Unreliable API, Refer to {basename_no_ext(final_path)}")
-            outputs = model.generate(
-                input_ids=input_ids,
+            outputs = seqgen_pipe(
+                prompt_messages,
                 max_new_tokens=args.max_new_tokens,
-                do_sample=False,
             )
-            answer = tokenizer.batch_decode(
-                outputs.detach().cpu().numpy()[:, input_ids.shape[1] :],
-                skip_special_tokens=True,
-            )[0]
-            with open(out_path, mode="wt", encoding="utf-8") as out_f:
+            # to explain the arbitrary access ( huggingface doesn't do this naturally )
+            # [0] since we're feeding the queries sequentially and as a result there's
+            # only one element in the output list,
+            # ["generated_text"] since everything is under that
+            # [-1] since everything before that is the prompt structure
+            # ["content"] since that's where the actual answer is
+            answer = outputs[0]["generated_text"][-1]["content"]
+            with open(out_path, mode="at", encoding="utf-8") as out_f:
                 if args.fancy_output:
                     out_f.write(structure_response(index, query, answer))
                 else:
