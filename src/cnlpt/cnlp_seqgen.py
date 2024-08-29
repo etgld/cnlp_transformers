@@ -117,9 +117,6 @@ def main() -> None:
 
         return _few_shot_prompt
 
-    def empty_prompt(system_prompt: str, query: str) -> List[Message]:
-        return []
-
     if args.examples_file is not None:
         examples = get_examples(args.examples_file)
         if len(examples) > 0:
@@ -175,6 +172,10 @@ def main() -> None:
                 else:
                     out_f.write(answer + "\n")
     logger.info("Finished writing results")
+
+
+def empty_prompt(system_prompt: str, query: str) -> List[Message]:
+    return []
 
 
 def structure_response(index: int, query: str, answer: str) -> str:
