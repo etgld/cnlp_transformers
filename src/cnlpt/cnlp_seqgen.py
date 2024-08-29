@@ -146,12 +146,12 @@ def main() -> None:
         model=final_path,
         # device="cuda",
         # use_auth_token=True,
-        model_kwargs={"quantization_config": quantization_config, "device_map" : "auto"},
+        model_kwargs={"quantization_config": quantization_config, "device_map": "auto"},
     )
     end = time()
     logger.info(f"Loading model took {end-start} seconds")
     for q_fn, queries in fn_to_queries.items():
-        out_dir = f"{args.output_dir}/{basename_no_ext(q_fn)}/{basename_no_ext(final_path)}/{basename_no_ext(args.prompt_file)}/{basename_no_ext(args.examples_file)}"
+        out_dir = f"{args.output_dir}/{basename_no_ext(q_fn)}/{final_path.split('/')[-1]}/{basename_no_ext(args.prompt_file)}/{basename_no_ext(args.examples_file)}"
         pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
         current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
         out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
