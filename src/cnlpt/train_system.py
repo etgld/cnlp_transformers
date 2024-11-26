@@ -26,6 +26,21 @@ from os.path import exists, join
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
+from huggingface_hub import hf_hub_url
+from torch.optim import AdamW
+from torch.utils.data.dataset import Dataset
+from transformers import AutoConfig, AutoModel, AutoTokenizer, EvalPrediction
+from transformers.data.processors.utils import (
+    DataProcessor,
+    InputExample,
+    InputFeatures,
+)
+from transformers.file_utils import CONFIG_NAME
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.training_args import IntervalStrategy
+
+sys.path.append(os.path.join(os.getcwd()))
 import requests
 import torch
 from datasets import Dataset
@@ -47,7 +62,12 @@ from .BaselineModels import CnnSentenceClassifier, LstmSentenceClassifier
 from .cnlp_args import CnlpTrainingArguments, ModelArguments
 from .cnlp_data import ClinicalNlpDataset, DataTrainingArguments, get_dataset_segment
 from .cnlp_metrics import cnlp_compute_metrics
-from .cnlp_predict import process_prediction, restructure_prediction, structure_labels
+from .cnlp_predict import (
+    process_prediction,
+    restructure_prediction,
+    structure_labels,
+    write_predictions_for_dataset,
+)
 from .cnlp_processors import classification, relex, tagging
 from .CnlpModelForClassification import CnlpConfig, CnlpModelForClassification
 from .HierarchicalTransformer import HierarchicalModel
@@ -227,9 +247,11 @@ def main(
     else:
         truncation_side = "right"
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name
-        if model_args.tokenizer_name
-        else model_args.encoder_name,
+        (
+            model_args.tokenizer_name
+            if model_args.tokenizer_name
+            else model_args.encoder_name
+        ),
         cache_dir=model_args.cache_dir,
         add_prefix_space=True,
         truncation_side=truncation_side,
@@ -341,9 +363,11 @@ def main(
         if is_external_encoder(encoder_name):
             config = CnlpConfig(
                 encoder_name=encoder_name,
-                finetuning_task=data_args.task_name
-                if data_args.task_name is not None
-                else dataset.tasks,
+                finetuning_task=(
+                    data_args.task_name
+                    if data_args.task_name is not None
+                    else dataset.tasks
+                ),
                 layer=model_args.layer,
                 tokens=model_args.token,
                 num_rel_attention_heads=model_args.num_rel_feats,
@@ -445,9 +469,11 @@ def main(
             # the arguments from trained cnlp models. While using CnlpConfig will override
             # the model_type and model_name of the encoder.
             config = AutoConfig.from_pretrained(
-                model_args.config_name
-                if model_args.config_name
-                else model_args.encoder_name,
+                (
+                    model_args.config_name
+                    if model_args.config_name
+                    else model_args.encoder_name
+                ),
                 cache_dir=model_args.cache_dir,
             )
 
@@ -495,9 +521,11 @@ def main(
             )
             config = CnlpConfig(
                 encoder_name=encoder_name,
-                finetuning_task=data_args.task_name
-                if data_args.task_name is not None
-                else dataset.tasks,
+                finetuning_task=(
+                    data_args.task_name
+                    if data_args.task_name is not None
+                    else dataset.tasks
+                ),
                 layer=model_args.layer,
                 tokens=model_args.token,
                 num_rel_attention_heads=model_args.num_rel_feats,
