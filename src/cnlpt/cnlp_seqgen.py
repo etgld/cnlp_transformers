@@ -4,10 +4,9 @@ import logging
 import os
 import pathlib
 import re
-from collections import deque
 from itertools import chain
 from time import time
-from typing import Callable, Deque, Dict, Iterable, List, Tuple, cast
+from typing import Callable, Dict, Iterable, List, Tuple, cast
 
 import pandas as pd
 import pytz
