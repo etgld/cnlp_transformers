@@ -58,6 +58,7 @@ parser.add_argument(
     default=[],
     help="TSVs for now, JSON or whatever else eventually",
 )
+
 parser.add_argument(
     "--query_dir",
     help="TSVs for now, JSON or whatever else eventually",
@@ -216,7 +217,15 @@ def get_examples(examples_file_path: str) -> List[Tuple[str, str]]:
     match suffix.strip():
         case ".tsv":
             full_dataframe = pd.read_csv(examples_file_path, sep="\t")
-            queries = cast(Iterable[str], full_dataframe["query"])
+            raw_queries = cast(
+                Iterable[str],
+                (
+                    full_dataframe["query"]
+                    if "query" in full_dataframe.columns
+                    else full_dataframe["sentence"]
+                ),
+            )
+            queries = (reinsert_whitespace(query) for query in raw_queries)
             responses = cast(Iterable[str], full_dataframe["response"])
             examples = list(zip(queries, responses))
         case ".txt" | "":
@@ -264,6 +273,27 @@ def zero_shot_prompt(system_prompt: str, query: str) -> List[Message]:
         {"role": "user", "content": query},
     ]
     return messages
+
+
+# retain newline information via special markers
+# while removing them for storage
+# ( so you can load them later via pandas without parsing errors )
+def clean_whitespace(sample: str) -> str:
+    return (
+        sample.replace("\n", "<cn>")
+        .replace("\t", "<ct>")
+        .replace("\f", "<cf>")
+        .replace("\r", "<cr>")
+    )
+
+
+def reinsert_whitespace(sample: str) -> str:
+    return (
+        sample.replace("<cn>", "\n")
+        .replace("<ct>", "\t")
+        .replace("<cf>", "\f")
+        .replace("<cr>", "\r")
+    )
 
 
 def few_shot_prompt(
