@@ -10,9 +10,59 @@ from typing import Callable, Dict, Iterable, List, Tuple, cast
 
 import pandas as pd
 import pytz
+from datasets import Dataset, load_dataset
 from tqdm import tqdm
-from transformers import BitsAndBytesConfig, pipeline
+from transformers import AutoTokenizer, BitsAndBytesConfig, pipeline
+from transformers.pipelines.pt_utils import KeyDataset
 
+RELEVANT_SECTIONS = {
+    "COPY_NUMBER_ANALYSIS",
+    "FLT3-ITD_ANALYSIS",
+    "OTHER_VUS",
+    "PATHOGENIC",
+    "POTENTIAL_GERMLINE_PATHOGENIC",
+    "POTENTIAL_GERMLINE_VUS",
+    "POTENTIAL_GERMLINE_WITH_POSSIBLE_SECONDARY_SOMATIC_VARIANTS",
+}
+
+# "ADDENDUM",
+# "ALLERGIES",
+# "BLOOD_PRESSURE",
+# "CHIEF_COMPLAINT",
+# "CLINICAL_HISTORY",
+# "DIAGNOSIS",
+# "DIAGNOSIS_AT_DEATH",
+# "DISCHARGE_INSTRUCTIONS",
+# "FAMILY_MEDICAL_HISTORY",
+# "FINAL_DIAGNOSIS",
+# "FINDINGS",
+# "FLUID_BALANCE",
+# "GENERAL_EXAM",
+# "GROSS_DESCRIPTION",
+# "HEIGHT",
+# "HISTORY_OF_PRESENT_ILLNESS",
+# "HISTORY_SOURCE",
+# "IMMUNOSUPPRESSANTS_MEDICATIONS",
+# "IMPRESSION",
+# "INSTRUCTIONS",
+# "INTERPRETATION",
+# "MEDICATIONS",
+# "MICROSCOPIC_DESCRIPTION",
+# "OBJECTIVE",
+# "PAST_MEDICAL_HISTORY",
+# "PAST_SURGICAL_HISTORY",
+# "PATHOLOGIC_DATA",
+# "PATIENT_HISTORY",
+# "PLAN",
+# "POST_PROCEDURE_DIAGNOSIS",
+# "PRINCIPAL_PROCEDURES",
+# "PROBLEM_LIST",
+# "REASON_FOR_CONSULT",
+# "RESPIRATORY_RATE",
+# "REVIEW_OF_SYSTEMS",
+# "SIMPLE_SEGMENT",
+# "TECHNIQUE",
+# "VITAL_SIGNS",
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
     "--examples_file",
@@ -101,14 +151,10 @@ def main() -> None:
     # do with best practices (or lack thereof?)
     # around how to best pad/trunctate input length
     system_prompt = get_system_prompt(args.prompt_file)
-    if len(args.query_files) > 0:
-        fn_to_queries = {q_fn: get_queries(q_fn) for q_fn in args.query_files}
-    elif args.query_dir is not None and len(os.listdir(args.query_dir)) > 0:
-        fn_to_queries = {q_fn: get_queries(q_fn) for q_fn in get_files(args.query_dir)}
-    else:
-        ValueError("Need at least one file to make queries")
-        fn_to_queries = {}
-
+    logger.info("Building dataset")
+    query_dataset = load_dataset("csv", sep="\t", data_files=["/home/ch231037/filtered_sds_scnir.tsv"])
+    query_dataset = query_dataset["train"]
+    logger.info(f"OVER HERE {query_dataset}")
     def few_shot_with_examples(
         examples: Iterable[Tuple[str, str]]
     ) -> Callable[[str, str], List[Message]]:
@@ -143,34 +189,56 @@ def main() -> None:
         model=final_path,
         # device="cuda",
         # use_auth_token=True,
-        model_kwargs={"quantization_config": quantization_config, "device_map": "auto"},
+        device_map="auto",
+        model_kwargs={"load_in_4bit" : True},
+        max_new_tokens=args.max_new_tokens,
+        batch_size=32,
     )
     end = time()
     logger.info(f"Loading model took {end-start} seconds")
-    for q_fn, queries in fn_to_queries.items():
-        out_dir = f"{args.output_dir}/{basename_no_ext(q_fn)}/{final_path.split('/')[-1]}/{basename_no_ext(args.prompt_file)}/{basename_no_ext(args.examples_file)}"
-        pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
-        current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
-        out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
-        out_path = os.path.join(out_dir, out_fn)
-        for index, query in enumerate(tqdm(queries)):
-            prompt_messages = get_prompt(system_prompt, query)
-            outputs = seqgen_pipe(
-                prompt_messages,
-                max_new_tokens=args.max_new_tokens,
+    current_time = datetime.datetime.now(pytz.timezone("America/New_York"))
+    out_dir = "FIXME_LATER"
+    out_fn = f"{current_time.strftime('%y-%m-%d_%H:%M')}.txt"
+    out_path = os.path.join(out_dir, out_fn)
+
+    def format_chat(sample: Dict[str, str]) -> Dict[str, str]:
+        return {
+            "text": seqgen_pipe.tokenizer.apply_chat_template(
+                get_prompt(system_prompt, sample["sentence"]),
+                tokenize=False,
+                add_generation_prompt=False,
             )
-            # to explain the arbitrary access ( huggingface doesn't do this naturally )
-            # [0] since we're feeding the queries sequentially and as a result there's
-            # only one element in the output list,
-            # ["generated_text"] since everything is under that
-            # [-1] since everything before that is the prompt structure
-            # ["content"] since that's where the actual answer is
-            answer = outputs[0]["generated_text"][-1]["content"]
-            with open(out_path, mode="at", encoding="utf-8") as out_f:
-                if args.fancy_output:
-                    out_f.write(structure_response(index, query, answer))
-                else:
-                    out_f.write(answer + "\n")
+        }
+
+    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+    # for index, sentence in enumerate(query_dataset["text"]):
+    #     print(f"Original Sentence {index}.\n\n{sentence}")
+    query_dataset = query_dataset.map(format_chat)
+    # for index, sentence in enumerate(query_dataset["formatted_chat"]):
+    #     print(f"Processed Sentence {index}.\n\n{sentence}")
+    logger.info(f"Processed dataset for {query_dataset}")
+    for outputs in tqdm(seqgen_pipe(KeyDataset(query_dataset, "text"))):
+        # prompt_messages = get_prompt(system_prompt, query)
+        # outputs = seqgen_pipe(
+        #     prompt_messages,
+        #     max_new_tokens=args.max_new_tokens,
+        # )
+        # to explain the arbitrary access ( huggingface doesn't do this naturally )
+        # [0] since we're feeding the query_dataset sequentially and as a result there's
+        # only one element in the output list,
+        # ["generated_text"] since everything is under that
+        # [-1] since everything before that is the prompt structure
+        # ["content"] since that's where the actual answer is
+        answer = (
+            outputs[0]["generated_text"].split("<|eot_id|>assistant")[-1].strip()
+        )
+        with open(out_path, mode="at", encoding="utf-8") as out_f:
+            # if args.fancy_output:
+            #     out_f.write(
+            #         structure_response(index, query, clean_whitespace(answer))
+            #     )
+            # else:
+            out_f.write(clean_whitespace(answer) + "\n")
     logger.info("Finished writing results")
 
 
@@ -194,21 +262,34 @@ def get_system_prompt(prompt_file_path: str) -> str:
         return raw_prompt
 
 
-def get_queries(queries_file_path: str) -> Iterable[str]:
+def get_query_dataset(queries_file_path: str) -> Dataset:
     # NB, this will retrieve the extension with the "." at the front
     # e.g. ".txt" rather than "txt"
     suffix = pathlib.Path(queries_file_path).suffix.lower()
     match suffix.strip():
         case ".tsv":
             full_dataframe = pd.read_csv(queries_file_path, sep="\t")
-            queries = cast(Iterable[str], full_dataframe["query"])
+            raw_queries = cast(
+                Iterable[str],
+                (
+                    full_dataframe["query"]
+                    if "query" in full_dataframe.columns
+                    else full_dataframe["sentence"]
+                ),
+            )
+
+            def with_whitespace() -> Iterable[Dict[str, str]]:
+                for query in raw_queries:
+                    yield {"text": reinsert_whitespace(query)}
+
+            queries = Dataset.from_generator(with_whitespace)
         case ".txt" | "":
             with open(queries_file_path, mode="rt") as qf:
                 query = qf.read()
-                queries = (query,)
+            queries = Dataset.from_list([{"text": query}])
         case _:
             ValueError(f"Presently unsupported query format {suffix}")
-            queries = []
+            queries = Dataset.from_list([])
     return queries
 
 
