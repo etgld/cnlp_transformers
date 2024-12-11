@@ -152,7 +152,8 @@ def main() -> None:
     # around how to best pad/trunctate input length
     system_prompt = get_system_prompt(args.prompt_file)
     logger.info("Building dataset")
-    query_dataset = load_dataset("csv", sep="\t", data_files=["/home/ch231037/filtered_sds_scnir.tsv"])
+    # query_dataset = load_dataset("csv", sep="\t", data_files=["/home/ch231037/filtered_sds_scnir.tsv"])
+    query_dataset = load_dataset("csv", sep="\t", data_files=["/home/ch231037/unfinished_filtered_sds_scnir.tsv"])
     query_dataset = query_dataset["train"]
     logger.info(f"OVER HERE {query_dataset}")
     def few_shot_with_examples(
@@ -192,7 +193,10 @@ def main() -> None:
         device_map="auto",
         model_kwargs={"load_in_4bit" : True},
         max_new_tokens=args.max_new_tokens,
-        batch_size=32,
+        # batch_size=32,
+        # batch_size=16,
+        # batch_size=8,
+        batch_size=4,
     )
     end = time()
     logger.info(f"Loading model took {end-start} seconds")
